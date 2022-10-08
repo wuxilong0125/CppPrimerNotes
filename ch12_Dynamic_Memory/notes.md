@@ -142,7 +142,7 @@ Blob<string> b1; //空Blob
 //b1指向最初由b2创建的元素。
 ```
 
-#### 直接管理内存
+## 直接管理内存
 
 ##### 使用new动态分配和初始化对象
 
@@ -173,3 +173,223 @@ int *pi2 = new int(); // 值初始化为0; *pi2为
 auto p1 = new auto(obj);
 auto p2 = new auto{a, b, c};
 ```
+
+##### 动态分配的const对象
+
+```cpp
+const int *pci = new const int(1024);
+const string *pcs = new const string;
+```
+
+**动态分配const对象必须初始化，有默认构造函数的类类型可以隐式初始化，其他类型需要显示初始化**
+
+##### 内存耗尽
+
+```cpp
+int *p1 = new int; // 如果分配失败，new抛出std::bad_alloc
+int *p2 = new (nothrow) int; // 如果分配失败，new返回空指针
+```
+
+##### 释放动态内存
+
+```cpp
+delete p;
+// p必须指向一个动态分配的对象或是一个空指针
+```
+
+##### 指针值和delete
+
+传递给delete的指针必须指向动态分配的内存，或者是一个空指针。
+
+```cpp
+int i, *pi1 = &i, *pi2 = nullptr;
+double *pd = new double(33), *pd2 = pd;
+delete i; // 错误，i不是一个指针
+delete pi1; // 未定义，pi1指向一个局部变量
+delete pd; // 正确
+delete pd2; // 未定义，pd2指向的内存已经被释放了
+delete pi2; // 正确，释放一个空指针总是没有错误的
+```
+
+##### 动态对象的生存期直到被释放时为止
+
+由shared_ptr管理的内存在最后一个shared_ptr销毁时会被自动释放。但对于通过内置指针类型来管理的内存就不是这样了，**内置指针管理的动态对象，直到被显式释放之前它都是存在的。**
+
+```cpp
+Foo* factory(T arg)
+{
+    ...
+    return new Foo(arg); 
+}
+
+void use_factory(T arg)
+{
+    Foo *p = factory(arg);
+    // 使用p但不delete它
+}// p离开了它的作用域，但它所指向的内存没有被释放！
+
+
+
+//修正
+void use_factory(T arg)
+{
+    Foo *p = factory(arg);
+    // 使用p
+    delete p;
+}
+```
+
+**由内置指针（而不是智能指针）管理的动态内存在被显式释放前一直都会存在**
+
+## shared_ptr 和 new 结合使用
+
+```cpp
+shared_ptr<double> p1; // shared_ptr 可以指向一个double
+shared_ptr<int> p2(new int(42)); // p2 指向一个值为42的int
+```
+
+**接收指针参数的智能指针构造函数是explicit的，因此，不能将一个内置指针隐式转换为一个智能指针，必须使用直接初始化形式来初始化一个智能指针**
+
+```cpp
+shared_ptr<int> p1 = new int(1024); //错误：必须使用直接初始化形式
+shared_ptr<int> p2(new int(1024)); // 正确
+```
+
+`shared_ptr<T> p(q)`：p管理内置指针q所指向的对象；q必须指向new分配的内存，且能够转换为T*类型
+
+`shared_ptr<T> p(u)`：p从unique_ptr u那里接管了对象的所有权；将u置为空
+
+`shared_ptr<T> p(q, d)`：p接管了内置指针q所指向的对象的所有权。必须能转换为T*类型。p将使用可调用对象d来代替delete
+
+`shared_ptr<T> p(p2, d)`：p是shared_ptr p2的拷贝，唯一的区别是p将用可调用对象d来代替delete
+
+`p.reset()`：若p是唯一指向其对象的shared_ptr，reset会释放此对象。
+
+`p.reset(q)`：若传递了可选的参数内置指针q，会令p指向q，否则会将p置为空。
+
+`p.reset(q,d)`：若传递了参数d，将会调用d而不是delete来释放q
+
+#### 智能指针的get方法
+
+get用来讲指针的访问权限传递给代码，你只有在确定代码不会delete指针的情况下，才能使用get。特别是，永远不要用get初始化另一个智能指针或者为另一个智能指针赋值。
+
+```cpp
+shared_ptr<int> p(new int(42)); // 引用计数为1
+int *q = p.get(); //正确，但使用q时要注意，不要让它管理的指针被释放
+{
+    未定义：两个独立的shared_ptr指向相同的内存
+    shared_ptr<int>(q);
+}// 程序块结束，q被销毁，它指向的内存被释放
+int foo = *p; // 未定义：p指向的内存已经被释放
+```
+
+## unique_ptr
+
+一个unique_ptr “拥有” 它所指向的对象。unique_ptr 不支持普通的拷贝和赋值操作。
+
+初始化unique_ptr必须采用直接初始化形式：
+
+```cpp
+unique_ptr<double> p1; // 可以指向一个double的unique_ptr
+
+unique_ptr<int> p2(new int(42)); //p2指向一个值为42的int
+
+
+unique_ptr<string> p1(new string("Stegosaurus"));
+unique_ptr<string> p2(p1); // 错误：unique_ptr 不支持拷贝
+unique_ptr<string> p3;
+p3 = p2; //错误：unique_ptr 不支持赋值
+```
+
+### unique_ptr操作
+
+```cpp
+unique_ptr<T> u1; //空unique_ptr，可以指向类型为T的对象，
+                  //u1会使用delete来释放它的指针
+unique_ptr<T, D> u2; // u2会使用一个类型为D的可调用对象来释放它的指针
+unique_ptr<T, D> u(d); // 空 unique_ptr，指向类型为T的对象，
+                       // 用类型为D的对象代替delete
+u = nullptr // 释放u指向的对象，将u置为空
+
+u.release() // u放弃对指针的控制权，返回指针，并将u置为空
+
+u.reset() //释放u指向的对象
+u.reset(q) // 如果提供了内置指针q，令u指向这个对象，否则u置为空
+```
+
+
+
+虽然我们不能拷贝或赋值unique_ptr，但可以通过调用release或reset将指针的所有权从一个(非const)unique_ptr转移给另一个unique：
+
+```cpp
+// 将所有权从p1转给p2
+unique_ptr<string> p2(p1.release()); // release将p1置为空
+unique_ptr<string> p3(new string("Trex")); 
+p2.reset(p3.release()); // 将所有权从p3转移给p2，
+                        // reset释放了p2原来指向的内存
+```
+
+调用release会切断unique_ptr和它原来管理的对象间的联系。release返回的指针通常被用来初始化另一个智能指针或给另一个智能指针赋值。
+
+`p2.release()` 错误，p2不会释放内存，而且我们丢失了指针
+
+`auto p = p2.release()` 正确，但我们必须记得delete(p)
+
+
+
+### 传递unique_ptr参数和返回unique_ptr
+
+不能拷贝unique_ptr的规则有一个例外：我们可以拷贝或赋值一个将要被销毁的unique_ptr。最常见的例子是从函数返回一个unique_ptr:
+
+```cpp
+unique_ptr<int> clone(int p) {
+    // 正确：从int*创建一个unique_ptr<int>
+    return unique_ptr<int>(new int(p));
+}
+```
+
+还可以返回一个局部对象的拷贝：
+
+```cpp
+unique_ptr<int> clone(int p) {
+    unique_ptr<int> ret(new int (p)); 
+    // ...
+    return ret;
+}
+```
+
+### 向unique_ptr传递删除器
+
+默认情况下，unique_ptr用delete释放它指向的对象。在创建或reset一个这种unique_ptr类型的对象时，必须提供一个指定类型的可调用对象(**删除器**)
+
+```cpp
+// p 指向一个类型为objT的对象，
+// 并使用第一个类型为delT的对象释放objT对象
+// 它会调用一个名为fcn的delT类型对象。
+unique_ptr<objT, delT> p (new objT, fcn);
+```
+
+## weak_ptr
+
+weak_ptr是一种不控制所指向对象生存期的智能指针，它指向由一个shared_ptr管理的对象。将一个weak_ptr绑定到一个shared_ptr不会改变shared_ptr的引用计数。一旦最后一个指向对象的shared_ptr被销毁，对象就会被释放。即使有weak_ptr指向对象，对象也还是会被释放，因此，weak_ptr的名字抓住了这种智能指针“弱”共享对象的特点。
+
+```cpp
+weak_ptr<T> w; // 空weak_ptr可以指向类型为T的对象
+weak_ptr<T> w(sp); // 与shared_ptr sp指向相同对象的weak_ptr。
+                   // T必须能转换为sp指向的类型
+w = p; //p可以是一个shared_pte 或 一个weak_ptr。赋值后w与p共享对象。
+w.reset() // 将w置为空
+w.use_count() // 与w共享对象的shared_ptr的数量
+w.expired() // 若w.use_count() 为0，返回true，否则返回false
+w.lock() // 如果expired为true，返回一个空shared_ptr；
+         // 否则返回一个指向w的对象的shared_ptr
+```
+
+当我们创建一个weak_ptr时，要用一个shared_ptr来初始化它：
+
+```cpp
+auto p = make_shared<int>(42);
+weak_ptr<int> wp(p); // wp弱共享p；p的引用计数未改变
+```
+
+### 核查指针类
