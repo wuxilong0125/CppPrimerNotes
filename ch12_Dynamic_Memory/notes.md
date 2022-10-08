@@ -131,3 +131,45 @@ p是use_factory的局部变量，在use_factory结束时它将被销毁，当p�
 3、程序需要在多个对象间共享数据
 
 **一般而言，如果两个对象共享底层的数据，当某个对象被销毁时，我们不能单方面地销毁底层数据**
+
+```cpp
+Blob<string> b1; //空Blob
+{// 新作用域
+    Blob<string> b2 = {"a", "an", "the"};
+    b1 = b2;
+} //b2被销毁了，但b2中的元素不能销毁
+
+//b1指向最初由b2创建的元素。
+```
+
+#### 直接管理内存
+
+##### 使用new动态分配和初始化对象
+
+自由空间分配的内存是无名的，因此new无法为其分配的对象命名，而是返回一个指向该对象的指针`int *pi = new int;//pi指向一个动态分配的，未初始化的无名对象`
+
+```cpp
+string *ps = new string; // 初始化为空string
+int *pi = new int;  // pi指向一个未初始化的int
+
+
+int *pi = new int(1024);
+string *ps = new string(10, '9');
+
+// 花括号初始化
+vector<int> *pv = new vector<int>{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+
+string *ps1 = new string; // 默认初始化为空string
+string *ps = new string(); // 初始值为空string
+
+
+int *pi1 = new int; // 默认初始化，*pi1的值未定义
+int *pi2 = new int(); // 值初始化为0; *pi2为
+```
+
+使用auto从此初始化器来推断我们想要分配的对象的类型，但是，由于编译器要用初始化器的类型来推断要分配的类型，只有当括号中仅有单一初始化器时才可以使用auto：
+
+```cpp
+auto p1 = new auto(obj);
+auto p2 = new auto{a, b, c};
+```
