@@ -317,8 +317,6 @@ u.reset() //释放u指向的对象
 u.reset(q) // 如果提供了内置指针q，令u指向这个对象，否则u置为空
 ```
 
-
-
 虽然我们不能拷贝或赋值unique_ptr，但可以通过调用release或reset将指针的所有权从一个(非const)unique_ptr转移给另一个unique：
 
 ```cpp
@@ -334,8 +332,6 @@ p2.reset(p3.release()); // 将所有权从p3转移给p2，
 `p2.release()` 错误，p2不会释放内存，而且我们丢失了指针
 
 `auto p = p2.release()` 正确，但我们必须记得delete(p)
-
-
 
 ### 传递unique_ptr参数和返回unique_ptr
 
@@ -392,4 +388,224 @@ auto p = make_shared<int>(42);
 weak_ptr<int> wp(p); // wp弱共享p；p的引用计数未改变
 ```
 
-### 核查指针类
+### weak_ptr的作用
+
+weak_ptr可用于解决shared_ptr的循环引用问题。
+
+**A——shared_ptr——>B,  C——shared_ptr——>B，B——shared_ptr——>A**
+
+1. A、B、C三个对象的数据结构中，A和C共享B的所有权，因此各持有一个指向B的std::shared_ptr;
+
+2. 假设有一个指针从B指回A，则该指针的类型应为weak_ptr，而不能是裸指针或shared_ptr，原因如下：
+   
+   ①假如是裸指针，当A被析构时，由于C仍指向B，所以B会被保留。但B中保存着指向A的空悬指针（野指针），而B却检测不出来，但解引用该指针时会产生未定义行为。
+   
+   ②假如是shared_ptr时。由于A和B相互保存着指向对方的shared_ptr，此时会形成循环引用，从而阻止了A和B的析构。
+   
+   ③假如是weak_ptr，这可以避免循环引用。假设A被析构，那么B的回指指针会空悬，但B可以检测到这一点，同时由于该指针是weak_ptr，不会影响A的强引用计数，因此当shared_ptr不再指向A时，不会阻止A的析构。
+
+```cpp
+#include <stdint.h>
+#include <iostream>
+#include <memory>
+using namespace std;
+class B;
+class A {
+    public:
+    A() { cout << "A()" << endl; }
+    ~A() { cout << "~A()" << endl; }
+    weak_ptr<B> ptr_b;
+};
+
+class B {
+    public:
+    B() { cout << "B()" << endl; }
+    ~B() { cout << "~B()" << endl; }
+    weak_ptr<A> ptr_a;
+};
+
+int main() {
+    shared_ptr<B> ptrb(new B());
+    shared_ptr<A> ptra(new A());
+
+    ptra->ptr_b = ptrb;
+    ptrb->ptr_a = ptra;
+
+    cout << ptra.use_count() << endl;
+    cout << ptrb.use_count() << endl; 
+    return 0;
+}
+
+/*
+out:
+B()
+A()
+1
+1
+~A()
+~B()
+*/
+```
+
+# 动态数组
+
+## new和数组
+
+new分配对象数组：
+
+```cpp
+// 调用get_size确定分配多少个int
+int *pia = new int[get_size()]; // pia指向第一个int
+
+
+
+//typedef 给数组取别名
+typedef int arrT[42]; // arrT表示42个int的数组类型
+int *p = new arrT; // 分配一个42个int的数组，p指向第一个int
+```
+
+当用new分配一个数组时，我们并未得到一个数组类型的对象，而是得到一个数组元素类型的指针。由于分配的内存并不是一个数组类型，因此不能对动态数组调用begin或end，这些函数使用数组维度来返回指向首元素和尾后元素的指针。
+
+### 初始化动态分配对象的数组
+
+默认情况下，new分配的对象，不管是单个分配的还是数组的，都是默认初始化的。可以对数组中的元素进行值初始化，方法是在大小之后跟一对空括号。
+
+```cpp
+int *pia = new int[10]; // 10个未初始化的int
+int *pia2 = new int[10](); // 10个值初始化为0的int
+string *psa = new string[10]; // 10个空string
+string *psa2 = new string[10](); // 10个空string
+```
+
+在新标准中，可以用花括号列表：
+
+```cpp
+// 10个int分别用列表中对应的初始化器初始化
+int *pia3 = new int[10]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+
+string *psa3 = new string[10]{"a", "an", "the", string(3,'x')};
+```
+
+### 动态分配一个空数组是合法的
+
+```cpp
+char arr[0]; // 错误：不能定义长度为0的数组
+char *cp = new char[0]; // 正确：但cp不能解引用                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        
+```
+
+### 释放动态数组
+
+```cpp
+delete p; // p必须指向一个动态分配的对象或为空
+delete [] pa; // pa必须指向一个动态分配的数组或为空
+```
+
+**NOTE：如果在delete一个数组指针时忘记了方括号，或者在delete一个单一对象的指针时使用了方括号，编译器很可能不会给出警告。我们的程序可能在执行过程中在没有任何警告的情况下行为异常。**
+
+### 智能指针和动态数组
+
+```cpp
+unique_ptr<int[]> up(new int[10]);
+// up指向一个包含10个未初始化int的数组
+up.release(); // 自动用delete[]销毁其指针
+```
+
+指向数组的unique_ptr不支持成员访问运算符(点和箭头运算符)，其他unique_ptr操作不变
+
+```cpp
+unique_ptr<T[]> u;//u可以指向一个动态分配的数组，数组元素类型为T
+unique_ptr<T[]> u(p); //u指向内置指针p所指向的动态分配的数组。
+                      //p必须能转换为类型T*
+u[i]; // u必须指向一个数组
+```
+
+shared_ptr不支持直接管理动态数组，如果希望使用shared_ptr管理一个动态数组，必须提供自己定义的删除器：
+
+// 为了使用shared_ptr，必须提供一个删除器
+
+`shared_ptr<int> sp(new int[10], [](int *p) { delete[] p; });`
+
+`sp.reset();`// 使用我们提供的lambda释放数组，它使用delete[]
+
+```cpp
+// shared_ptr未定义下标运算符，并且不支持指针的算术运算
+for (size_t i = 0; i != 10; ++ i)
+    *(sp.get() + i) = i; // 使用get获取一个内置指针
+```
+
+### allocator类
+
+new有一些灵活性上的局限，其中一方面表现在它将内存分配和对象构造组合在了一起。分配单个对象时，通常希望将内存分配和对象初始化组合在一起。当分配一大块内存时，通常计划在这块内存上按需构造对象。在此情况下，我们希望将内存分配和对象构造分离。这意味着我们可以分配大块内存，但只在真正需要时才真正执行对象创建操作。
+
+allocator类将内存分配和对象构造分离开来。它提供一种类型感知的内存分配方法，它分配的内存是原始的、未构造的。
+
+类似vector，allocator是一个模板。为了定义一个allocator对象，我们必须指明这个allocator可以分配的对象类型。当一个allocator对象分配内存时，它会根据给定的对象类型来确定恰当的内存大小和对齐位置：
+
+```cpp
+allocator<string> alloc; // 可以分配string的allocator对象
+auto const p = alloc.allocatr(n); // 分配n个未初始化的string
+// 这个allocate调用为n个string分配了内存
+```
+
+```cpp
+allocator<T> a // 定义了一个名为a的allocator对象，
+                //它可以为类型为T的对象分配内存
+
+a.allocate(n) // 分配一段原始的、未构造的内存，保存n个类型为T的对象
+a.deallocate(p, n) 
+/*释放从T*指针p中地址开始的内存，
+这块内存保存了n个类型为T的对象;p必须是一个先前有allocate返回的指针。
+且n必须是p创建时所要求的大小。在调用deallocate之前，用户必须对每个在这块内存
+中创建的对象调用destory
+*/
+
+a.construct(p, args)
+/*
+p必须是一个类型为T*的指针，指向一块原始内存;arg被传递给类型为T的构造函数，
+用来在p指向的内存中构造一个对象
+*/
+
+a.destory(p)
+/*
+p为T*类型的指针，此算法对p指向的对象执行析构函数
+*/
+```
+
+### allocator 分配未构造的内存
+
+allocator分配的内存是未构造的。我们按需要在此内存中构造对象。在新标准库中，construct成员函数接受一个指针和零个或多个额外参数，在给定位置构造一个元素。额外参数用来初始化构造的对象。类似make_shared的参数，这些额外参数必须是与构造的对象的类型相匹配的合法的初始化器:
+
+```cpp
+auto q = p; // q 指向最后构造的元素之后的位置
+alloc.construct(q++); // *q为空字符串
+alloc.construct(q++, 10, 'c'); //*q为ccccccccccc
+alloc.construct(q++, "hi"); // *q为hi
+
+
+// 销毁元素
+while(q != p) alloc.destory(--q);
+```
+
+一旦元素被销毁后，就可以重新使用这部分内存来保存其他string，也可以将其归还给系统。释放内存通过调用deallocate来完成
+
+`alloc.deallocate(p, n);`
+
+我们传递给deallocate的指针不能为空，它必须指向由allocate分配的内存。而且，传递给deallocate的大小参数必须与调用allocated分配内存时提供的大小参数具有一样的值。
+
+### 拷贝和填充未初始化内存的算法
+
+`uninitialized_copy(b, e, b2)`
+
+从迭代器b和e指出的输入范围中拷贝元素到迭代器b2指定的未构造的原始内存中。b2指向的内存必须足够大，能容纳输入序列中元素的拷贝
+
+`uninitialized_copy_n(b, n, b2)`
+
+从迭代器b指向的元素开始，拷贝n个元素到b2开始的内存中
+
+`uninitialized_fill(b, e, t)`
+
+在迭代器b和e指定的原始内存范围内创建对象，对象的值均为t的拷贝
+
+`uninitialized_fill_n(b, n, t)`
+
+从迭代器b指向的内存地址开始创建n个对象，b必须指向足够大的未构造的原始内存，能够容纳给定数量的对象
